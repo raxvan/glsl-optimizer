@@ -9,12 +9,13 @@ static glslopt_ctx* gContext = 0;
 static int printhelp(const char* msg)
 {
 	if (msg) printf("%s\n\n\n", msg);
-	printf("Usage: glslopt <-f|-v> <input shader> [<output shader>]\n");
+	printf("Usage: glslopt [--metal-argpack=[struct|uniform]] <-f|-v> <input shader> [<output shader>]\n");
 	printf("\t-f : fragment shader (default)\n");
 	printf("\t-v : vertex shader\n");
 	printf("\t-1 : target OpenGL (default)\n");
 	printf("\t-2 : target OpenGL ES 2.0\n");
 	printf("\t-3 : target OpenGL ES 3.0\n");
+	printf("\t-4 : target Metal\n");
 	printf("\n\tIf no output specified, output is to [input].out.\n");
 	return 1;
 }
@@ -75,7 +76,7 @@ static bool saveFile(const char* filename, const char* data)
 	return true;
 }
 
-static bool compileShader(const char* dstfilename, const char* srcfilename, bool vertexShader)
+static bool compileShader(const char* dstfilename, const char* srcfilename, bool vertexShader, glslopt_metal_argpack packing)
 {
 	const char* originalShader = loadFile(srcfilename);
 	if( !originalShader )
@@ -83,7 +84,7 @@ static bool compileShader(const char* dstfilename, const char* srcfilename, bool
 
 	const glslopt_shader_type type = vertexShader ? kGlslOptShaderVertex : kGlslOptShaderFragment;
 
-	glslopt_shader* shader = glslopt_optimize(gContext, type, originalShader, 0);
+	glslopt_shader* shader = glslopt_optimize(gContext, type, packing, originalShader, 0);
 	if( !glslopt_get_status(shader) )
 	{
 		printf( "Failed to compile %s:\n\n%s\n", srcfilename, glslopt_get_log(shader));
@@ -106,6 +107,8 @@ int main(int argc, char* argv[])
 
 	bool vertexShader = false, freename = false;
 	glslopt_target languageTarget = kGlslTargetOpenGL;
+	glslopt_metal_argpack packing = kGlslMetalStructPack;
+	
 	const char* source = 0;
 	char* dest = 0;
 
@@ -123,6 +126,38 @@ int main(int argc, char* argv[])
 				languageTarget = kGlslTargetOpenGLES20;
 			else if( 0 == strcmp("-3", argv[i]) )
 				languageTarget = kGlslTargetOpenGLES30;
+			else if( 0 == strcmp("-4", argv[i]) )
+				languageTarget = kGlslTargetMetal;
+			else if( 0 == strncmp("--", argv[i], 2))
+			{
+				const char* p1 = strtok(argv[i], "=");
+				const char* p2 = strtok(NULL, "=");
+
+				if( 0 == strcmp("--metal-argpack", p1))
+				{
+					bool valid = false;
+
+					if( p2 && 0 == strcmp("struct", p2))
+					{
+						packing = kGlslMetalStructPack;
+						valid = true;
+					}
+					if( p2 && 0 == strcmp("uniform", p2))
+					{
+						packing = kGlslkMetalExpandArgs;
+						printf("unpacking metal arguments!\n");
+						valid = true;
+					}
+
+					if( !valid )
+					{
+						printf("Invalid value specified for metal-argpack. Valid values are [struct, uniform]. \n"
+						"struct -- Pack all uniforms inside a single struct which gets passed to the main function.\n"
+						"uniform -- uniforms are passed as arguments directly to the main function with an increasing buffer index. eg: ucolor[[buffer(0)]], u_type[[buffer(1)]]...\n"
+						);
+					}
+				}
+			}
 		}
 		else
 		{
@@ -149,7 +184,7 @@ int main(int argc, char* argv[])
 	}
 
 	int result = 0;
-	if( !compileShader(dest, source, vertexShader) )
+	if( !compileShader(dest, source, vertexShader, packing ))
 		result = 1;
 
 	if( freename ) free(dest);

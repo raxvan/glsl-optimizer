@@ -34,6 +34,11 @@ enum PrintGlslMode {
 	kPrintGlslFragment,
 };
 
+enum MetalParamPack {
+	kMetalStructPack, // packs all the main params into a uniform struct in xlatMtlShaderUniform _mtl_u
+	kMetalExpandArgs, // creates individual arguments to the main function using [[buffer(0, 1...)]]
+};
+
 extern char* _mesa_print_ir_glsl(exec_list *instructions,
 			struct _mesa_glsl_parse_state *state,
 			char* buf, PrintGlslMode mode);

@@ -603,7 +603,7 @@ static void find_shader_variables(glslopt_shader* sh, exec_list* ir)
 }
 
 
-glslopt_shader* glslopt_optimize (glslopt_ctx* ctx, glslopt_shader_type type, const char* shaderSource, unsigned options)
+glslopt_shader* glslopt_optimize (glslopt_ctx* ctx, glslopt_shader_type type, glslopt_metal_argpack packing, const char* shaderSource, unsigned options)
 {
 	glslopt_shader* shader = new (ctx->mem_ctx) glslopt_shader ();
 
@@ -657,11 +657,10 @@ glslopt_shader* glslopt_optimize (glslopt_ctx* ctx, glslopt_shader_type type, co
 	if (!state->error) {
 		validate_ir_tree(ir);
 		if (ctx->target == kGlslTargetMetal)
-			shader->rawOutput = _mesa_print_ir_metal(ir, state, ralloc_strdup(shader, ""), printMode, &shader->uniformsSize);
+			shader->rawOutput = _mesa_print_ir_metal(ir, state, ralloc_strdup(shader, ""), printMode, (MetalParamPack)packing, &shader->uniformsSize);
 		else
 			shader->rawOutput = _mesa_print_ir_glsl(ir, state, ralloc_strdup(shader, ""), printMode);
 	}
-	
 	// Link built-in functions
 	shader->shader->symbols = state->symbols;
 	shader->shader->uses_builtin_functions = state->uses_builtin_functions;
@@ -698,7 +697,7 @@ glslopt_shader* glslopt_optimize (glslopt_ctx* ctx, glslopt_shader_type type, co
 	if (!state->error)
 	{
 		if (ctx->target == kGlslTargetMetal)
-			shader->optimizedOutput = _mesa_print_ir_metal(ir, state, ralloc_strdup(shader, ""), printMode, &shader->uniformsSize);
+			shader->optimizedOutput = _mesa_print_ir_metal(ir, state, ralloc_strdup(shader, ""), printMode, (MetalParamPack)packing, &shader->uniformsSize);
 		else
 			shader->optimizedOutput = _mesa_print_ir_glsl(ir, state, ralloc_strdup(shader, ""), printMode);
 	}

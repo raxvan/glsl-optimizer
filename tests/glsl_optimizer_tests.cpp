@@ -503,7 +503,7 @@ static bool TestFile (glslopt_ctx* ctx, bool vertex,
 	bool res = true;
 
 	glslopt_shader_type type = vertex ? kGlslOptShaderVertex : kGlslOptShaderFragment;
-	glslopt_shader* shader = glslopt_optimize (ctx, type, input.c_str(), 0);
+	glslopt_shader* shader = glslopt_optimize (ctx, type, kGlslMetalStructPack, input.c_str(), 0);
 
 	bool optimizeOk = glslopt_get_status(shader);
 	if (optimizeOk)

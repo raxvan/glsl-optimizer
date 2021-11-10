@@ -105,6 +105,7 @@ struct metal_print_context
 	, matrixConstructorsDone(false)
 	, shadowSamplerDone(false)
 	, textureCounter(0)
+	, bufferCounter(0)
 	, attributeCounter(0)
 	, uniformLocationCounter(0)
 	, colorCounter(0)
@@ -124,6 +125,7 @@ struct metal_print_context
 	bool matrixConstructorsDone;
 	bool shadowSamplerDone;
 	int textureCounter;
+	int bufferCounter;
 	int attributeCounter;
 	int uniformLocationCounter;
 	int colorCounter;
@@ -132,7 +134,7 @@ struct metal_print_context
 
 class ir_print_metal_visitor : public ir_visitor {
 public:
-	ir_print_metal_visitor(metal_print_context& ctx_, string_buffer& buf, global_print_tracker_metal* globals_, PrintGlslMode mode_, const _mesa_glsl_parse_state* state_)
+	ir_print_metal_visitor(metal_print_context& ctx_, string_buffer& buf, global_print_tracker_metal* globals_, PrintGlslMode mode_, MetalParamPack packing_, const _mesa_glsl_parse_state* state_)
 		: ctx(ctx_)
 		, buffer(buf)
 		, loopstate(NULL)
@@ -146,6 +148,7 @@ public:
 		expression_depth = 0;
 		globals = globals_;
 		mode = mode_;
+		packing = packing_;
 		state = state_;
 	}
 
@@ -153,7 +156,7 @@ public:
 	{
 	}
 
-
+	void print_var_inout(string_buffer& buf, ir_variable* var, bool insideLHS);
 	void indent(void);
 	void newline_indent();
 	void end_statement_line();
@@ -193,6 +196,7 @@ public:
 	global_print_tracker_metal* globals;
 	const _mesa_glsl_parse_state* state;
 	PrintGlslMode mode;
+	MetalParamPack packing;
 	const PrintGlslMode mode_whole;
 	loop_state* loopstate;
 	bool	inside_loop_body;
@@ -205,7 +209,7 @@ public:
 char*
 _mesa_print_ir_metal(exec_list *instructions,
 	    struct _mesa_glsl_parse_state *state,
-		char* buffer, PrintGlslMode mode, int* outUniformsSize)
+		char* buffer, PrintGlslMode mode, MetalParamPack packing, int* outUniformsSize)
 {
 	metal_print_context ctx(buffer);
 
@@ -216,7 +220,9 @@ _mesa_print_ir_metal(exec_list *instructions,
 
 	ctx.inputStr.asprintf_append("struct xlatMtlShaderInput {\n");
 	ctx.outputStr.asprintf_append("struct xlatMtlShaderOutput {\n");
-	ctx.uniformStr.asprintf_append("struct xlatMtlShaderUniform {\n");
+
+	if(packing == kMetalStructPack)
+		ctx.uniformStr.asprintf_append("struct xlatMtlShaderUniform {\n");
 
 	// remove unused struct declarations
 	do_remove_unused_typedecls(instructions);
@@ -252,7 +258,16 @@ _mesa_print_ir_metal(exec_list *instructions,
 					strOut->asprintf_append ("\n  , ");
 				}
 				else
-					strOut = &ctx.uniformStr;
+				{
+					if(packing == kMetalStructPack)
+						strOut = &ctx.uniformStr;
+					else
+					{
+						strOut = &ctx.paramsStr;
+						ctx.writingParams = true;
+						strOut->asprintf_append ("\n  , ");
+					}
+				}
 			}
 			if (var->data.mode == ir_var_system_value)
 			{
@@ -272,14 +287,20 @@ _mesa_print_ir_metal(exec_list *instructions,
 			strOut = &ctx.typedeclStr;
 		}
 
-		ir_print_metal_visitor v (ctx, *strOut, &gtracker, mode, state);
+		ir_print_metal_visitor v (ctx, *strOut, &gtracker, mode, packing, state);
 		v.loopstate = ls;
 
 		ir->accept(&v);
+
+		//TODO; investigate syntax
 		if (ir->ir_type != ir_type_function && !v.skipped_this_ir)
 		{
-			if (!ctx.writingParams)
+			if (!ctx.writingParams && ir->ir_type != 16) 
+			{
 				strOut->asprintf_append (";\n");
+				//strOut->asprintf_append ("/*ir_type=%d*/;\n", ir->ir_type);
+			}
+			//precision type is leaked from somewhere ?, this could break stuff
 		}
 	}
 
@@ -293,7 +314,9 @@ _mesa_print_ir_metal(exec_list *instructions,
 	}
 	ctx.inputStr.asprintf_append("};\n");
 	ctx.outputStr.asprintf_append("};\n");
-	ctx.uniformStr.asprintf_append("};\n");
+
+	if(packing == kMetalStructPack)
+		ctx.uniformStr.asprintf_append("};\n");
 
 	// emit global array/struct constants
 	
@@ -302,7 +325,7 @@ _mesa_print_ir_metal(exec_list *instructions,
 	{
 		ir_constant* c = node->ir;
 
-		ir_print_metal_visitor v (ctx, ctx.prefixStr, &gtracker, mode, state);
+		ir_print_metal_visitor v (ctx, ctx.prefixStr, &gtracker, mode, packing, state);
 
 		v.buffer.asprintf_append ("constant ");
 		print_type(v.buffer, c, c->type, false);
@@ -333,7 +356,6 @@ _mesa_print_ir_metal(exec_list *instructions,
 		}
 		v.buffer.asprintf_append ("};\n");
 	}
-
 
 	ctx.prefixStr.asprintf_append("%s", ctx.inputStr.c_str());
 	ctx.prefixStr.asprintf_append("%s", ctx.outputStr.c_str());
@@ -585,11 +607,17 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 			return;
 		}
 	}
-
+	if(ctx.writingParams && !ir->type->is_sampler())
+	{
+		buffer.asprintf_append("constant");
+	}
 	buffer.asprintf_append ("%s%s%s%s",
 							cent, inv, interp[ir->data.interpolation], mode[ir->data.mode]);
 	print_type(buffer, ir, ir->type, false);
-	buffer.asprintf_append (" ");
+	if(ctx.writingParams && !ir->type->is_sampler())
+		buffer.asprintf_append ("& ");
+	else
+		buffer.asprintf_append (" ");
 	print_var_name (ir);
 	print_type_post(buffer, ir->type, false);
 
@@ -642,12 +670,25 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 	// uniform texture?
 	if (ir->data.mode == ir_var_uniform && ctx.writingParams)
 	{
-		buffer.asprintf_append (" [[texture(%i)]]", ctx.textureCounter);
-		buffer.asprintf_append (", sampler _mtlsmp_%s [[sampler(%i)]]", ir->name, ctx.textureCounter);
-		ir->data.explicit_location = 1;
-		ir->data.location = ctx.textureCounter;
-		++ctx.textureCounter;
+		if(ir->type->is_sampler())
+		{
+			buffer.asprintf_append (" [[texture(%i)]]", ctx.textureCounter);
+			buffer.asprintf_append (", sampler _mtlsmp_%s [[sampler(%i)]]", ir->name, ctx.textureCounter);
+			ir->data.explicit_location = 1;
+			ir->data.location = ctx.textureCounter;
+			++ctx.textureCounter;
+		}
+		else
+		{
+			printf("found a uniform while writing params: %s, counter=%d\n", ir->name, ctx.bufferCounter);
+
+			buffer.asprintf_append (" [[buffer(%i)]]", ctx.bufferCounter);
+			ir->data.explicit_location = 1;
+			ir->data.location = ctx.bufferCounter;
+			++ctx.bufferCounter;
+		}
 	}
+	
 	// regular uniform?
 	if (ir->data.mode == ir_var_uniform && !ctx.writingParams)
 	{
@@ -727,7 +768,11 @@ void ir_print_metal_visitor::visit(ir_function_signature *ir)
 			buffer.asprintf_append ("fragment ");
 		if (this->mode_whole == kPrintGlslVertex)
 			buffer.asprintf_append ("vertex ");
-		buffer.asprintf_append ("xlatMtlShaderOutput xlatMtlMain (xlatMtlShaderInput _mtl_i [[stage_in]], constant xlatMtlShaderUniform& _mtl_u [[buffer(0)]]");
+
+		buffer.asprintf_append ("xlatMtlShaderOutput xlatMtlMain (xlatMtlShaderInput _mtl_i [[stage_in]]");
+		if(packing == kMetalStructPack)
+			buffer.asprintf_append (", constant xlatMtlShaderUniform& _mtl_u [[buffer(0)]]");
+
 		if (!ctx.paramsStr.empty())
 		{
 			buffer.asprintf_append ("%s", ctx.paramsStr.c_str());
@@ -1372,14 +1417,17 @@ void ir_print_metal_visitor::visit(ir_swizzle *ir)
    }
 }
 
-static void print_var_inout (string_buffer& buf, ir_variable* var, bool insideLHS)
+void ir_print_metal_visitor::print_var_inout (string_buffer& buf, ir_variable* var, bool insideLHS)
 {
 	if (var->data.mode == ir_var_shader_in)
 		buf.asprintf_append ("_mtl_i.");
 	if (var->data.mode == ir_var_shader_out)
 		buf.asprintf_append ("_mtl_o.");
 	if (var->data.mode == ir_var_uniform && !var->type->is_sampler())
-		buf.asprintf_append ("_mtl_u.");
+	{
+		if(packing == kMetalStructPack)
+			buf.asprintf_append ("_mtl_u.");
+	}
 	if (var->data.mode == ir_var_shader_inout)
 		buf.asprintf_append (insideLHS ? "_mtl_o." : "_mtl_i.");
 }
