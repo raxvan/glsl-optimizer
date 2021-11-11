@@ -29,7 +29,7 @@
 #include "loop_analysis.h"
 #include "program/hash_table.h"
 #include <math.h>
-
+#include <vector>
 
 static void print_type(string_buffer& buffer, ir_instruction* ir, const glsl_type *t, bool arraySize);
 static void print_type_post(string_buffer& buffer, const glsl_type *t, bool arraySize);
@@ -203,6 +203,7 @@ public:
 	bool	inside_lhs;
 	bool	skipped_this_ir;
 	bool	previous_skipped;
+	std::vector<ir_function*> function_stack;
 };
 
 
@@ -431,6 +432,7 @@ void ir_print_metal_visitor::print_var_name (ir_variable* v)
 static void print_type_precision(string_buffer& buffer, const glsl_type *t, glsl_precision prec, bool arraySize)
 {
 	const bool halfPrec = (prec == glsl_precision_medium || prec == glsl_precision_low);
+	arraySize = true;
 
 	const char* typeName = t->name;
 	// scalars
@@ -497,10 +499,16 @@ static void print_type_precision(string_buffer& buffer, const glsl_type *t, glsl
 	else if (!strcmp(typeName, "sampler2DArray"))
 		typeName = halfPrec ? "texture2d_array<half>" : "texture2d_array<float>";
 
-	if (t->base_type == GLSL_TYPE_ARRAY) {
+	if (t->base_type == GLSL_TYPE_ARRAY) 
+	{
+		if (arraySize)
+			buffer.asprintf_append("array<");
+
 		print_type_precision(buffer, t->fields.array, prec, true);
 		if (arraySize)
-			buffer.asprintf_append ("[%u]", t->length);
+		{
+			buffer.asprintf_append(", %u>", t->length); //buffer.asprintf_append ("[%u]", t->length);
+		}
 	} else if ((t->base_type == GLSL_TYPE_STRUCT)
 			   && (strncmp("gl_", typeName, 3) != 0)) {
 		buffer.asprintf_append ("%s", typeName);
@@ -522,8 +530,8 @@ static void print_type(string_buffer& buffer, ir_instruction* ir, const glsl_typ
 static void print_type_post(string_buffer& buffer, const glsl_type *t, bool arraySize)
 {
 	if (t->base_type == GLSL_TYPE_ARRAY) {
-		if (!arraySize)
-			buffer.asprintf_append ("[%u]", t->length);
+		//if (!arraySize)
+		//	buffer.asprintf_append ("[%u]", t->length);
 	}
 }
 
@@ -609,13 +617,18 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 	}
 	if(ctx.writingParams && !ir->type->is_sampler())
 	{
-		buffer.asprintf_append("constant");
+		// don't add constant to build-in variables
+		if (strncmp(ir->name, "gl_", 3))
+			buffer.asprintf_append("constant ");
 	}
 	buffer.asprintf_append ("%s%s%s%s",
 							cent, inv, interp[ir->data.interpolation], mode[ir->data.mode]);
 	print_type(buffer, ir, ir->type, false);
-	if(ctx.writingParams && !ir->type->is_sampler())
+
+	if(ctx.writingParams && !ir->type->is_sampler() && (ir->type->length > 1 || ir->type->vector_elements > 1 || ir->type->matrix_columns > 1))
+	{
 		buffer.asprintf_append ("& ");
+	}
 	else
 		buffer.asprintf_append (" ");
 	print_var_name (ir);
@@ -680,8 +693,6 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 		}
 		else
 		{
-			printf("found a uniform while writing params: %s, counter=%d\n", ir->name, ctx.bufferCounter);
-
 			buffer.asprintf_append (" [[buffer(%i)]]", ctx.bufferCounter);
 			ir->data.explicit_location = 1;
 			ir->data.location = ctx.bufferCounter;
@@ -826,6 +837,7 @@ void ir_print_metal_visitor::visit(ir_function_signature *ir)
 
 void ir_print_metal_visitor::visit(ir_function *ir)
 {
+   function_stack.push_back(ir);
    bool found_non_builtin_proto = false;
 
    foreach_in_list(ir_function_signature, sig, &ir->signatures) {
@@ -847,6 +859,7 @@ void ir_print_metal_visitor::visit(ir_function *ir)
    this->mode = oldMode;
 
    indent();
+   function_stack.pop_back();
 }
 
 
@@ -1799,6 +1812,17 @@ void
 ir_print_metal_visitor::visit(ir_return *ir)
 {
    buffer.asprintf_append ("return");
+   if(function_stack.size())
+   {
+	   ir_function* current_function = function_stack.back();
+
+	   // returns in the main function always return _mtl_o object
+	   if(!strcmp(current_function->name, "main"))
+	   {
+		   buffer.asprintf_append(" _mtl_o");
+		   return;
+	   }	   		
+   }
 
    ir_rvalue *const value = ir->get_value();
    if (value) {

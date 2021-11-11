@@ -145,7 +145,6 @@ int main(int argc, char* argv[])
 					if( p2 && 0 == strcmp("uniform", p2))
 					{
 						packing = kGlslkMetalExpandArgs;
-						printf("unpacking metal arguments!\n");
 						valid = true;
 					}
 
