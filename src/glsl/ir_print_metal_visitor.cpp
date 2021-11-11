@@ -615,17 +615,20 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 			return;
 		}
 	}
+	bool isBuiltIn = false;
 	if(ctx.writingParams && !ir->type->is_sampler())
 	{
 		// don't add constant to build-in variables
 		if (strncmp(ir->name, "gl_", 3))
 			buffer.asprintf_append("constant ");
+		else
+			isBuiltIn = false;
 	}
 	buffer.asprintf_append ("%s%s%s%s",
 							cent, inv, interp[ir->data.interpolation], mode[ir->data.mode]);
 	print_type(buffer, ir, ir->type, false);
 
-	if(ctx.writingParams && !ir->type->is_sampler() && (ir->type->length > 1 || ir->type->vector_elements > 1 || ir->type->matrix_columns > 1))
+	if(ctx.writingParams && !ir->type->is_sampler() && !isBuiltIn)
 	{
 		buffer.asprintf_append ("& ");
 	}
