@@ -615,14 +615,14 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 			return;
 		}
 	}
-	bool isBuiltIn = true;
+	bool isBuiltIn = false;
 	if(ctx.writingParams && !ir->type->is_sampler())
 	{
 		// don't add constant to build-in variables
 		if (strncmp(ir->name, "gl_", 3))
 			buffer.asprintf_append("constant ");
 		else
-			isBuiltIn = false;
+			isBuiltIn = true;
 	}
 	buffer.asprintf_append ("%s%s%s%s",
 							cent, inv, interp[ir->data.interpolation], mode[ir->data.mode]);
