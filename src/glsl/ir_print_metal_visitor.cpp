@@ -615,7 +615,7 @@ void ir_print_metal_visitor::visit(ir_variable *ir)
 			return;
 		}
 	}
-	bool isBuiltIn = false;
+	bool isBuiltIn = true;
 	if(ctx.writingParams && !ir->type->is_sampler())
 	{
 		// don't add constant to build-in variables
